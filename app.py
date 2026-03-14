@@ -31,14 +31,13 @@ def load_tokens(server_name):
 def get_url(server_name):
     if server_name == "IND":
         return "https://client.ind.freefiremobile.com/GetPlayerPersonalShow"
-    elif server_name == "VN":   # ← SỬA Ở ĐÂY
-        return "https://clientbp.ggblueshark.com/GetPlayerPersonalShow"   # Domain ổn định cho VN
+    elif server_name == "VN":
+        return "https://clientbp.ggblueshark.com/GetPlayerPersonalShow"
     elif server_name in {"BR", "US", "SAC", "NA"}:
         return "https://client.us.freefiremobile.com/GetPlayerPersonalShow"
     else:
         return "https://clientbp.ggblueshark.com/GetPlayerPersonalShow"
 
-# ====================== PHẦN CÒN LẠI GIỮ NGUYÊN (copy y nguyên) ======================
 def parse_protobuf_response(response_data):
     try:
         info = Info()
@@ -107,6 +106,45 @@ async def send_until_2000_success(tokens, uid, server_name, target_success=2000)
             print(f"Batch sent: {batch_size}, Success in batch: {batch_success}, Total success so far: {total_success}")
 
     return total_success, total_sent, player_info
+
+# ====================== ROUTE MỚI: XEM SỐ LƯỢNG TOKEN ======================
+@app.route('/tokens', methods=['GET'])
+def check_tokens():
+    servers = {
+        "IND": "token_ind.json",
+        "VN": "token_vn.json",
+        "BR/US/SAC/NA": "token_br.json",
+        "BD (others)": "token_bd.json"
+    }
+
+    result = {}
+    total_all = 0
+
+    for label, path in servers.items():
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            all_tokens = len(data)
+            valid_tokens = [item["token"] for item in data if "token" in item and item["token"] not in ["", "N/A"]]
+            valid_count = len(valid_tokens)
+            invalid_count = all_tokens - valid_count
+            total_all += valid_count
+            result[label] = {
+                "file": path,
+                "total": all_tokens,
+                "valid": valid_count,
+                "invalid": invalid_count
+            }
+        except FileNotFoundError:
+            result[label] = {"file": path, "error": "❌ File not found"}
+        except Exception as e:
+            result[label] = {"file": path, "error": str(e)}
+
+    return jsonify({
+        "servers": result,
+        "total_valid_tokens": total_all
+    }), 200
+# ==========================================================================
 
 @app.route('/<string:server>/<int:uid>', methods=['GET'])
 def send_visits(server, uid):
