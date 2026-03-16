@@ -1,4 +1,4 @@
-#This was made by AGAJAYOFFICIAL 
+# This was made by AGAJAYOFFICIAL
 from flask import Flask, jsonify
 import aiohttp
 import asyncio
@@ -7,6 +7,7 @@ from byte import encrypt_api, Encrypt_ID
 from visit_count_pb2 import Info
 
 app = Flask(__name__)
+
 
 def load_tokens(server_name):
     try:
@@ -28,6 +29,7 @@ def load_tokens(server_name):
         app.logger.error(f"❌ Token load error for {server_name}: {e}")
         return []
 
+
 def get_url(server_name):
     if server_name == "IND":
         return "https://client.ind.freefiremobile.com/GetPlayerPersonalShow"
@@ -37,6 +39,7 @@ def get_url(server_name):
         return "https://client.us.freefiremobile.com/GetPlayerPersonalShow"
     else:
         return "https://clientbp.ggblueshark.com/GetPlayerPersonalShow"
+
 
 def parse_protobuf_response(response_data):
     try:
@@ -54,6 +57,7 @@ def parse_protobuf_response(response_data):
         app.logger.error(f"❌ Protobuf parsing error: {e}")
         return None
 
+
 async def visit(session, url, token, uid, data):
     headers = {
         "ReleaseVersion": "OB52",
@@ -62,15 +66,20 @@ async def visit(session, url, token, uid, data):
         "Host": url.replace("https://", "").split("/")[0]
     }
     try:
-        async with session.post(url, headers=headers, data=data, ssl=False) as resp:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with session.post(url, headers=headers, data=data, ssl=False, timeout=timeout) as resp:
+            print(f"[DEBUG] Status: {resp.status} | URL: {url}")
             if resp.status == 200:
                 response_data = await resp.read()
                 return True, response_data
             else:
+                body = await resp.text()
+                print(f"[DEBUG] Non-200: {resp.status} — {body[:200]}")
                 return False, None
     except Exception as e:
-        app.logger.error(f"❌ Visit error: {e}")
+        print(f"❌ Visit error detail: {type(e).__name__}: {e}")
         return False, None
+
 
 async def send_until_2000_success(tokens, uid, server_name, target_success=2000):
     url = get_url(server_name)
@@ -80,25 +89,34 @@ async def send_until_2000_success(tokens, uid, server_name, target_success=2000)
     first_success_response = None
     player_info = None
 
-    async with aiohttp.ClientSession(connector=connector) as session:
+    # Debug: kiểm tra payload trước
+    try:
         encrypted = encrypt_api("08" + Encrypt_ID(str(uid)) + "1801")
+        print(f"[DEBUG] Encrypted hex: {encrypted}")
         data = bytes.fromhex(encrypted)
+        print(f"[DEBUG] Data bytes length: {len(data)}")
+    except Exception as e:
+        print(f"❌ Encrypt error: {type(e).__name__}: {e}")
+        return 0, 0, None
 
+    async with aiohttp.ClientSession(connector=connector) as session:
         while total_success < target_success:
             batch_size = min(target_success - total_success, 300)
             tasks = [
-                asyncio.create_task(visit(session, url, tokens[(total_sent + i) % len(tokens)], uid, data))
+                asyncio.create_task(
+                    visit(session, url, tokens[(total_sent + i) % len(tokens)], uid, data)
+                )
                 for i in range(batch_size)
             ]
             results = await asyncio.gather(*tasks)
-            
+
             if first_success_response is None:
                 for success, response in results:
                     if success and response is not None:
                         first_success_response = response
                         player_info = parse_protobuf_response(response)
                         break
-            
+
             batch_success = sum(1 for r, _ in results if r)
             total_success += batch_success
             total_sent += batch_size
@@ -107,7 +125,8 @@ async def send_until_2000_success(tokens, uid, server_name, target_success=2000)
 
     return total_success, total_sent, player_info
 
-# ====================== ROUTE MỚI: XEM SỐ LƯỢNG TOKEN ======================
+
+# ====================== ROUTE: XEM SỐ LƯỢNG TOKEN ======================
 @app.route('/tokens', methods=['GET'])
 def check_tokens():
     servers = {
@@ -144,7 +163,8 @@ def check_tokens():
         "servers": result,
         "total_valid_tokens": total_all
     }), 200
-# ==========================================================================
+# ========================================================================
+
 
 @app.route('/<string:server>/<int:uid>', methods=['GET'])
 def send_visits(server, uid):
@@ -158,9 +178,15 @@ def send_visits(server, uid):
     print(f"🚀 Sending visits to UID: {uid} using {len(tokens)} tokens on server {server}")
     print(f"Waiting for total {target_success} successful visits...")
 
-    total_success, total_sent, player_info = asyncio.run(send_until_2000_success(
-        tokens, uid, server, target_success=target_success
-    ))
+    # Fix: tạo event loop mới tránh conflict với Flask
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        total_success, total_sent, player_info = loop.run_until_complete(
+            send_until_2000_success(tokens, uid, server, target_success=target_success)
+        )
+    finally:
+        loop.close()
 
     if player_info:
         player_info_response = {
@@ -175,6 +201,7 @@ def send_visits(server, uid):
         return jsonify(player_info_response), 200
     else:
         return jsonify({"error": "Could not decode player information"}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5090)
