@@ -81,7 +81,7 @@ async def visit(session, url, token, uid, data):
         return False, None
 
 
-async def send_until_2000_success(tokens, uid, server_name, target_success=2000):
+async def send_until_10000_success(tokens, uid, server_name, target_success=10000):
     url = get_url(server_name)
     connector = aiohttp.TCPConnector(limit=0)
     total_success = 0
@@ -101,7 +101,7 @@ async def send_until_2000_success(tokens, uid, server_name, target_success=2000)
 
     async with aiohttp.ClientSession(connector=connector) as session:
         while total_success < target_success:
-            batch_size = min(target_success - total_success, 300)
+            batch_size = min(target_success - total_success, 3000)
             tasks = [
                 asyncio.create_task(
                     visit(session, url, tokens[(total_sent + i) % len(tokens)], uid, data)
@@ -170,7 +170,7 @@ def check_tokens():
 def send_visits(server, uid):
     server = server.upper()
     tokens = load_tokens(server)
-    target_success = 2000
+    target_success = 10000
 
     if not tokens:
         return jsonify({"error": "❌ No valid tokens found"}), 500
@@ -183,7 +183,7 @@ def send_visits(server, uid):
     asyncio.set_event_loop(loop)
     try:
         total_success, total_sent, player_info = loop.run_until_complete(
-            send_until_2000_success(tokens, uid, server, target_success=target_success)
+            send_until_10000_success(tokens, uid, server, target_success=target_success)
         )
     finally:
         loop.close()
